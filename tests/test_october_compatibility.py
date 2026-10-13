@@ -38,7 +38,7 @@ def main():
     config = (ROOT / 'OptiScaler/Config.cpp').read_text(encoding='utf-8')
     assert 'DisableOTA.set_from_config(readBool("NvApi", "DisableOTA"))' in config
     assert 'GetBoolValue(Instance()->DisableOTA.value_for_config())' in config
-    assert 'CustomOptional<bool> DisableOTA { false };' in (ROOT / 'OptiScaler/Config.h').read_text(encoding='utf-8')
+    assert 'CustomOptional<bool> DisableOTA { true };' in (ROOT / 'OptiScaler/Config.h').read_text(encoding='utf-8')
     dll = (ROOT / 'OptiScaler/dllmain.cpp').read_text(encoding='utf-8')
     policy = re.search(r'    if \(quirks & GameQuirk::DisableOTA.*?quirks.reset\(GameQuirk::DisableOTA\);', function(dll, 'static void CheckQuirks('), re.S).group()
     # Extract actual policy and execute explicit true/false versus auto below.
@@ -49,7 +49,7 @@ def main():
 struct Option {
  std::optional<bool> value;
  bool has_value(){return value.has_value();}
- bool value_or_default(){return value.value_or(false);}
+ bool value_or_default(){return value.value_or(true);}
  void set_volatile_value(bool v){value=v;}
 };
 struct Config {Option DisableOTA; static Config* Instance(){static Config c;return &c;}};
@@ -76,7 +76,7 @@ int main(){int checks=0;auto check=[&](bool ok){++checks;if(!ok){std::cerr<<"Fai
 for(bool game:{false,true})for(int setting:{-1,0,1}){
  Config::Instance()->DisableOTA.value=setting<0?std::nullopt:std::optional<bool>(setting==1);
  Quirks quirks{game};Policy(quirks);
- bool disabled=setting<0?game:setting==1;
+ bool disabled=setting<0?true:setting==1;
  check(Config::Instance()->DisableOTA.value_or_default()==disabled);
  for(unsigned flags=0;flags<16;++flags){sl::Preferences pref{flags};
  check(Apply(pref)==(disabled?(flags&~3u):flags));check(pref.flags==flags);}

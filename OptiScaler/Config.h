@@ -748,7 +748,7 @@ class Config
 
     // NVAPI Override
     CustomOptional<bool> DisableFlipMetering { false };
-    CustomOptional<bool> DisableOTA { false };
+    CustomOptional<bool> DisableOTA { true };
     CustomOptional<bool> DisableReflexSync { false };
 
     // Spoofing
