@@ -243,6 +243,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             FGDLSSGForceDMFG.set_from_config(readBool("DLSSG", "ForceDMFG"));
             FGDLSSGAdaMfgUnlock.set_from_config(readBool("DLSSG", "AdaMfgUnlock"));
             FGDLSSGAdaBlackwellKernels.set_from_config(readBool("DLSSG", "AdaBlackwellKernels"));
+            FGDLSSGAdaFlipMeteringPatch.set_from_config(readBool("DLSSG", "AdaFlipMeteringPatch"));
         }
 
         // FSR FG Inputs
@@ -1075,6 +1076,8 @@ bool Config::SaveIni()
                      GetBoolValue(Instance()->FGDLSSGAdaMfgUnlock.value_for_config()).c_str());
         ini.SetValue("DLSSG", "AdaBlackwellKernels",
                      GetBoolValue(Instance()->FGDLSSGAdaBlackwellKernels.value_for_config()).c_str());
+        ini.SetValue("DLSSG", "AdaFlipMeteringPatch",
+                     GetBoolValue(Instance()->FGDLSSGAdaFlipMeteringPatch.value_for_config()).c_str());
     }
 
     // OptiFG

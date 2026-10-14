@@ -114,7 +114,10 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
     // The module publishes DLSSG.MultiFrameCountMax while it initialises and slDLSSGGetState returns
     // the published value rather than recomputing it, so the patch has to be in before anything in
     // here runs. Patching at the first GetState is one call too late.
-    if (libName.contains(L"nvngx_dlssg"))
+    //
+    // The driver's OTA copy (models\dlssg\versions\<n>\files\<hash>.bin) does not carry the name, and
+    // the .bin branch below would load it unpatched; recognise it by its folder (Susemi 3def828d).
+    if (libName.contains(L"nvngx_dlssg") || MfgUnlock::Provider::IsProviderPath(libName))
     {
         auto dlssgSnippet = NtdllProxy::LoadLibraryExW_Ldr(lpLibFullPath, NULL, 0);
 

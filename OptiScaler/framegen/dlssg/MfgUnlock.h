@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MfgUnlockProvider.h"
+
 #include <SysUtils.h>
 
 #include <string>
@@ -49,6 +51,16 @@ struct Status
     unsigned int CopiesSeen = 0;     // distinct module handles processed
     unsigned int CopiesComplete = 0; // ...of which fully patched (both gates)
     std::string UnmatchedVersion;    // version of the first copy whose signatures missed, for reports
+    bool KernelsMissing = false;     // a copy's gates were known but left shut: no kernel could be retargeted
+
+    // The Streamline DLSS-G plugin's own frame-count clamp. A string literal, empty until a plugin has been
+    // seen: "patched", or why it was not.
+    const char* PluginCeiling = "";
+
+    // Software frame pacing ([DLSSG] AdaFlipMeteringPatch). A string literal like PluginCeiling: empty
+    // until a plugin has been seen, "off", "patched", or why it was not.
+    const char* FlipMetering = "";
+    unsigned int FlipSites = 0;
 };
 
 // Coherent snapshot of the aggregate state (by value, safe to read from any thread).
@@ -58,12 +70,24 @@ Status LastStatus();
 // True once any nvngx_dlssg.dll copy has been processed (lock-free, for hot paths).
 bool AnyModuleSeen();
 
-// Applies the patches to every loaded nvngx_dlssg.dll copy, once per module. Silent and harmless
-// when the config option is off, when nvngx_dlssg.dll is not loaded, or when a signature does not
-// match exactly once. The parameterless form patches whatever GetModuleHandleW finds; prefer the
-// handle form at load sites so a second copy (e.g. DriverStore) is not missed after the first.
+// Applies the patches to every loaded DLSS-G provider copy, once per module. Silent and harmless
+// when the config option is off, when no provider is loaded, or when a signature does not match
+// exactly once. Both gates are located before either is written, and on Ada the gates open only
+// once the interpolation kernels were retargeted, so a copy is never left half patched or opened
+// to frames that all land on the midpoint. The parameterless form finds the provider by name and,
+// rate limited, by walking the loaded modules (the driver's OTA <hash>.bin, a renamed snippet);
+// prefer the handle form at load sites so a second copy is not missed after the first.
 void TryApply();
 void TryApply(HMODULE module);
+
+// A Streamline DLSS-G plugin (sl.dlss_g) was loaded, from wherever the game or the driver's OTA store
+// put it. Software frame pacing is applied at once if configured; the plugin's own frame-count clamp is
+// neutralised once the snippet unlock has landed, so a wrapper that cached 1 cannot lower the ceiling
+// again. Ada only; never scans the process.
+void OnStreamlinePluginLoaded(HMODULE plugin);
+
+// Whether the Streamline plugin was put on software frame pacing.
+bool SoftwarePacing();
 
 // How many distinct module handles have completed patching (0 when none seen yet).
 size_t PatchedModuleCount();

@@ -2165,6 +2165,9 @@ void StreamlineHooks::hookDlssg(HMODULE slDlssg)
         return;
     }
 
+    // The game's copy or the driver's OTA one; both come through here (Susemi 3def828d).
+    MfgUnlock::OnStreamlinePluginLoaded(slDlssg);
+
     if (o_dlssg_slGetPluginFunction)
         unhookDlssg();
 
