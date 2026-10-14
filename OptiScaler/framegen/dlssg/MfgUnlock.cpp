@@ -42,6 +42,28 @@ constexpr std::string_view kAdvertisePattern309 = "81 FD B0 01 00 00 0F 8C ? ? ?
 //     setae al
 constexpr std::string_view kValidatePattern309 = "3D B0 01 00 00 0F 93 C0";
 
+// Bytes a pattern spans: one per space-separated token, wildcards included.
+constexpr size_t PatternLength(std::string_view pattern)
+{
+    size_t tokens = 0;
+    bool inToken = false;
+
+    for (const char c : pattern)
+    {
+        if (c == ' ')
+            inToken = false;
+        else if (!inToken)
+        {
+            inToken = true;
+            ++tokens;
+        }
+    }
+
+    return tokens;
+}
+
+static_assert(PatternLength(kAdvertisePattern309) == 17 && PatternLength(kAdvertisePattern) == 21);
+
 // The first match, or 0 when there is none or more than one: a second match means the pattern no longer
 // identifies the code it was written for.
 uintptr_t UniqueAddress(HMODULE module, std::string_view pattern)
@@ -444,17 +466,44 @@ unsigned int RewriteBlackwellKernels(HMODULE module)
 }
 } // namespace
 
+static void PruneUnloadedCopies();
+
 void MfgUnlock::TryApply()
 {
     if (!Config::Instance()->FGDLSSGAdaMfgUnlock.value_or_default())
         return;
 
+    // While the ceiling is shut by a copy that is not fully patched, check now and then whether that copy
+    // is still loaded. Unloads that go around the FreeLibrary hooks are caught here; nothing runs once the
+    // ceiling is open or before any copy was seen.
+    if (AnyModuleSeen() && UnlockedMax() == 0)
+    {
+        static std::atomic<uint64_t> nextPrune { 0 };
+        constexpr uint64_t kPruneIntervalMs = 1000;
+
+        const uint64_t now = GetTickCount64();
+        if (auto due = nextPrune.load(); now >= due && nextPrune.compare_exchange_strong(due, now + kPruneIntervalMs))
+            PruneUnloadedCopies();
+    }
+
     if (auto module = FindProvider(); module != nullptr)
         TryApply(module);
 }
 
+// One record per DLSS-G copy the unlock has processed and that is still mapped.
+struct CopyRecord
+{
+    MfgUnlock::Status status;
+    std::wstring path;
+
+    // The bytes of the advertise gate right after it was patched. A fresh mapping of the same file at the
+    // same address no longer carries them, which tells a reload apart from a repeated load of one mapping.
+    uintptr_t markAt = 0;
+    std::vector<uint8_t> mark;
+};
+
 static std::mutex g_patchMutex;
-static std::map<HMODULE, MfgUnlock::Status> g_patched; // completed attempts only
+static std::map<HMODULE, CopyRecord> g_patched; // completed attempts on copies still mapped
 static MfgUnlock::Status g_aggregate {};
 static std::atomic<unsigned int> g_publishedMax { 0 };
 static std::atomic<bool> g_anyModule { false };
@@ -469,8 +518,36 @@ static std::wstring ModulePath(HMODULE module)
     return GetModuleFileNameW(module, path, MAX_PATH) != 0 ? std::wstring(path) : std::wstring(L"?");
 }
 
-static bool PublishCopy(HMODULE module, const std::string& version, bool advertise, bool validate, unsigned int kernels,
-                        bool kernelsMissing);
+// Compares bytes that may belong to a module another thread is unloading; an unmapped page reads as a
+// mismatch. No C++ objects here, so structured exception handling is allowed.
+static bool BytesEqual(uintptr_t at, const uint8_t* expected, size_t length)
+{
+    __try
+    {
+        return std::memcmp(reinterpret_cast<const void*>(at), expected, length) == 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+// Whether the loader still has this exact copy mapped: the handle resolves to itself and to the same file.
+static bool StillMapped(HMODULE module, const std::wstring& path)
+{
+    HMODULE current = nullptr;
+
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(module), &current) ||
+        current != module)
+        return false;
+
+    return ModulePath(module) == path;
+}
+
+static bool PublishCopy(HMODULE module, CopyRecord record);
+static void AggregateLocked();
+static void PruneUnloadedCopies();
 static void PatchPluginCeilings();
 
 void MfgUnlock::TryApply(HMODULE module)
@@ -480,8 +557,23 @@ void MfgUnlock::TryApply(HMODULE module)
 
     {
         std::lock_guard<std::mutex> lock(g_patchMutex);
-        if (g_patched.contains(module))
-            return; // same handle already processed; concurrent duplicates converge below
+
+        if (auto it = g_patched.find(module); it != g_patched.end())
+        {
+            // Same handle seen before. While the patched bytes are still there it is the same mapping and
+            // there is nothing to do (concurrent duplicates converge in PublishCopy). If they are gone, the
+            // loader unmapped the copy and mapped a fresh image at the same address: the record is stale
+            // and the copy is patched again below.
+            const auto& copy = it->second;
+
+            if (copy.mark.empty() || BytesEqual(copy.markAt, copy.mark.data(), copy.mark.size()))
+                return;
+
+            LOG_INFO("MFG unlock: {} was mapped again at the same address; patching the fresh image",
+                     wstring_to_string(copy.path));
+            g_patched.erase(it);
+            AggregateLocked();
+        }
     }
 
     if (std::find(g_patchStack.begin(), g_patchStack.end(), module) != g_patchStack.end())
@@ -566,54 +658,84 @@ void MfgUnlock::TryApply(HMODULE module)
         LOG_WARN("MFG unlock: nvngx_dlssg.dll incomplete, advertise {}, validate {} ({})", advertise, validate,
                  pathA);
 
-    if (!PublishCopy(module, version, advertise, validate, kernels, kernelsMissing))
+    CopyRecord record {};
+    record.status.ModuleFound = true;
+    record.status.SnippetVersion = version;
+    record.status.AdvertiseMatched = advertise;
+    record.status.ValidateMatched = validate;
+    record.status.KernelsRewritten = kernels;
+    record.status.KernelsMissing = kernelsMissing;
+    record.path = pathW;
+
+    if (advertise)
+    {
+        // The span the advertise pattern covers, which includes every byte its patch wrote.
+        const auto span = PatternLength(gates.shape309 ? kAdvertisePattern309 : kAdvertisePattern);
+        const auto* start = reinterpret_cast<const uint8_t*>(gates.advertise);
+        record.markAt = gates.advertise;
+        record.mark.assign(start, start + span);
+    }
+
+    if (!PublishCopy(module, std::move(record)))
         return; // lost the race; the winner's results stand
 
     // A plugin that was loaded first has been waiting for the snippet.
     PatchPluginCeilings();
 }
 
-static bool PublishCopy(HMODULE module, const std::string& version, bool advertise, bool validate, unsigned int kernels,
-                        bool kernelsMissing)
+static bool PublishCopy(HMODULE module, CopyRecord record)
 {
-    using MfgUnlock::Status;
-
     std::lock_guard<std::mutex> lock(g_patchMutex);
     if (g_patched.contains(module))
         return false;
 
-    Status perModule {};
-    perModule.ModuleFound = true;
-    perModule.SnippetVersion = version;
-    perModule.AdvertiseMatched = advertise;
-    perModule.ValidateMatched = validate;
-    perModule.KernelsRewritten = kernels;
-    perModule.KernelsMissing = kernelsMissing;
-    g_patched.emplace(module, perModule);
+    g_patched.emplace(module, std::move(record));
+    AggregateLocked();
 
-    // Fail closed: the ceiling opens only when at least one copy is seen and EVERY seen copy
-    // is fully patched. A complete bin64 copy next to an unpatched DriverStore copy reports 0,
-    // because the serving copy cannot be identified and a split success is not a success.
-    // Known limitation: unload + address reuse is not tracked; a stale entry fails closed too.
+    return true;
+}
+
+// Fail closed: the ceiling opens only when at least one copy is mapped and EVERY mapped copy is fully
+// patched. A complete copy next to an unpatched one reports 0, because the serving copy cannot be
+// identified and a split success is not a success. Copies the loader has unmapped are no longer in
+// g_patched (PruneUnloadedCopies): one that is gone cannot be serving frames. Caller holds g_patchMutex.
+static void AggregateLocked()
+{
     bool allComplete = !g_patched.empty();
     bool anyKernelsMissing = false;
     unsigned int bestKernels = 0;
     unsigned int complete = 0;
-    for (const auto& [handle, st] : g_patched)
+    std::string firstComplete;
+    std::string firstAny;
+    std::string unmatched;
+
+    for (const auto& [handle, copy] : g_patched)
     {
+        const auto& st = copy.status;
         const bool whole = st.AdvertiseMatched && st.ValidateMatched;
         allComplete = allComplete && whole;
         anyKernelsMissing = anyKernelsMissing || st.KernelsMissing;
+
         if (whole)
+        {
             ++complete;
-        else if (g_aggregate.UnmatchedVersion.empty() && !st.SnippetVersion.empty())
-            g_aggregate.UnmatchedVersion = st.SnippetVersion;
+            if (firstComplete.empty())
+                firstComplete = st.SnippetVersion;
+        }
+        else if (unmatched.empty() && !st.SnippetVersion.empty())
+        {
+            unmatched = st.SnippetVersion;
+        }
+
         if (st.KernelsRewritten > bestKernels)
             bestKernels = st.KernelsRewritten;
-        if (g_aggregate.SnippetVersion.empty() && !st.SnippetVersion.empty())
-            g_aggregate.SnippetVersion = st.SnippetVersion;
+        if (firstAny.empty() && !st.SnippetVersion.empty())
+            firstAny = st.SnippetVersion;
     }
-    g_aggregate.ModuleFound = true;
+
+    g_aggregate.ModuleFound = !g_patched.empty();
+    g_aggregate.SnippetVersion = firstComplete.empty() ? firstAny : firstComplete;
+    g_aggregate.UnmatchedVersion = unmatched;
     g_aggregate.AdvertiseMatched = allComplete;
     g_aggregate.ValidateMatched = allComplete;
     g_aggregate.KernelsRewritten = bestKernels;
@@ -622,8 +744,63 @@ static bool PublishCopy(HMODULE module, const std::string& version, bool adverti
     g_aggregate.CopiesComplete = complete;
     g_anyModule.store(true, std::memory_order_release);
     g_publishedMax.store(allComplete ? kMaxGeneratedFrames : 0, std::memory_order_release);
+}
 
-    return true;
+// Drops the copies the loader has since unmapped. The driver probes its own DriverStore snippet at
+// start-up and unloads it again; left in, that copy would keep the ceiling shut for the whole session.
+// Loader queries run outside g_patchMutex (see TryApply), so the list is read, checked, then trimmed.
+static void PruneUnloadedCopies()
+{
+    std::vector<std::pair<HMODULE, std::wstring>> copies;
+
+    {
+        std::lock_guard<std::mutex> lock(g_patchMutex);
+        for (const auto& [handle, copy] : g_patched)
+            copies.emplace_back(handle, copy.path);
+    }
+
+    std::vector<HMODULE> gone;
+    for (const auto& [handle, path] : copies)
+    {
+        if (!StillMapped(handle, path))
+            gone.push_back(handle);
+    }
+
+    if (gone.empty())
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_patchMutex);
+
+        for (HMODULE handle : gone)
+        {
+            if (auto it = g_patched.find(handle); it != g_patched.end())
+            {
+                LOG_INFO("MFG unlock: {} ({}) is no longer loaded and no longer counts towards the ceiling",
+                         wstring_to_string(it->second.path), it->second.status.SnippetVersion);
+                g_patched.erase(it);
+            }
+        }
+
+        AggregateLocked();
+    }
+
+    // The ceiling may have just opened; a plugin seen earlier has been waiting for that.
+    PatchPluginCeilings();
+}
+
+void MfgUnlock::OnModuleReleased(HMODULE module)
+{
+    if (module == nullptr)
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_patchMutex);
+        if (!g_patched.contains(module))
+            return;
+    }
+
+    PruneUnloadedCopies();
 }
 
 // The Streamline DLSS-G plugins seen so far, and the ones already tried for the ceiling. A plugin is
@@ -649,50 +826,67 @@ static bool AdaUnlockWanted()
 
 // Software frame pacing: pin the plugin's flip-metering state to its own software fallback. Applied when
 // the plugin is loaded, before Streamline uses it, because rewriting a register store is a seven byte
-// write into code that no other thread should be executing yet. Caller holds g_pluginMutex.
-// Adapted from Susemi (3def828d).
+// write into code that no other thread should be executing yet. Adapted from Susemi (3def828d).
+//
+// g_pluginMutex only guards the shared state: module queries and writes run outside it, because this file
+// can also be reached from the FreeLibrary hook, where the loader lock may be held.
 static void PatchFlipMetering(HMODULE plugin)
 {
-    if (std::string_view(g_flipMetering) == "patched")
-        return;
-
-    // A plugin has been seen; "off" says that, and that nothing was asked of it.
-    if (!Config::Instance()->FGDLSSGAdaFlipMeteringPatch.value_or_default())
     {
-        g_flipMetering = "off";
-        return;
+        std::lock_guard<std::mutex> lock(g_pluginMutex);
+
+        if (std::string_view(g_flipMetering) == "patched")
+            return;
+
+        // A plugin has been seen; "off" says that, and that nothing was asked of it.
+        if (!Config::Instance()->FGDLSSGAdaFlipMeteringPatch.value_or_default())
+        {
+            g_flipMetering = "off";
+            return;
+        }
     }
 
     const auto pluginPath = wstring_to_string(ModulePath(plugin));
 
     MfgUnlock::Flip::Plan plan;
     const auto found = MfgUnlock::Flip::FindPlan(plugin, plan);
+    const char* state = "not applied";
 
     if (found != MfgUnlock::Flip::FindResult::Found)
     {
-        g_flipMetering = MfgUnlock::Flip::Describe(found);
-        LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, g_flipMetering);
-        return;
+        state = MfgUnlock::Flip::Describe(found);
+        LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, state);
+    }
+    else
+    {
+        switch (MfgUnlock::Flip::Apply(plan))
+        {
+        case MfgUnlock::Flip::ApplyResult::Patched:
+            state = "patched";
+            LOG_INFO("MFG unlock: {}: flip-metering state +0x{:X} pinned to {} at {} site(s); multi-frame should pace "
+                     "in software",
+                     pluginPath, plan.field, plan.value, plan.sites.size());
+            break;
+        case MfgUnlock::Flip::ApplyResult::Mismatch:
+            state = "the plugin changed while it was being patched";
+            LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, state);
+            break;
+        case MfgUnlock::Flip::ApplyResult::ProtectFailed:
+            state = "its memory could not be made writable";
+            LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, state);
+            break;
+        }
     }
 
-    switch (MfgUnlock::Flip::Apply(plan))
-    {
-    case MfgUnlock::Flip::ApplyResult::Patched:
-        g_flipMetering = "patched";
+    std::lock_guard<std::mutex> lock(g_pluginMutex);
+
+    if (std::string_view(g_flipMetering) == "patched")
+        return;
+
+    g_flipMetering = state;
+
+    if (std::string_view(state) == "patched")
         g_flipSites = static_cast<unsigned int>(plan.sites.size());
-        LOG_INFO("MFG unlock: {}: flip-metering state +0x{:X} pinned to {} at {} site(s); multi-frame should pace in "
-                 "software",
-                 pluginPath, plan.field, plan.value, plan.sites.size());
-        break;
-    case MfgUnlock::Flip::ApplyResult::Mismatch:
-        g_flipMetering = "the plugin changed while it was being patched";
-        LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, g_flipMetering);
-        break;
-    case MfgUnlock::Flip::ApplyResult::ProtectFailed:
-        g_flipMetering = "its memory could not be made writable";
-        LOG_WARN("MFG unlock: {}: software frame pacing not applied: {}", pluginPath, g_flipMetering);
-        break;
-    }
 }
 
 // Only once the snippet unlock has landed. Raising the plugin's ceiling while the snippet still answers
@@ -702,19 +896,25 @@ static void PatchPluginCeilings()
     if (MfgUnlock::UnlockedMax() == 0)
         return;
 
-    std::lock_guard<std::mutex> lock(g_pluginMutex);
+    // Claim the plugins not tried yet; the module queries and the write happen outside the lock.
+    std::vector<HMODULE> pending;
 
-    for (HMODULE plugin : g_plugins)
     {
-        if (std::find(g_pluginsTried.begin(), g_pluginsTried.end(), plugin) != g_pluginsTried.end())
-            continue;
+        std::lock_guard<std::mutex> lock(g_pluginMutex);
 
-        g_pluginsTried.push_back(plugin);
+        for (HMODULE plugin : g_plugins)
+        {
+            if (std::find(g_pluginsTried.begin(), g_pluginsTried.end(), plugin) != g_pluginsTried.end())
+                continue;
 
+            g_pluginsTried.push_back(plugin);
+            pending.push_back(plugin);
+        }
+    }
+
+    for (HMODULE plugin : pending)
+    {
         const auto pluginPath = wstring_to_string(ModulePath(plugin));
-
-        // A plugin that was patched stays patched; a second one that cannot be does not change that.
-        const bool alreadyPatched = std::string_view(g_pluginCeiling) == "patched";
 
         MfgUnlock::Plugin::CeilingSite site;
         const char* result = "not matched";
@@ -748,7 +948,9 @@ static void PatchPluginCeilings()
             break;
         }
 
-        if (!alreadyPatched)
+        // A plugin that was patched stays patched; a second one that cannot be does not change that.
+        std::lock_guard<std::mutex> lock(g_pluginMutex);
+        if (std::string_view(g_pluginCeiling) != "patched")
             g_pluginCeiling = result;
     }
 }
@@ -758,17 +960,21 @@ void MfgUnlock::OnStreamlinePluginLoaded(HMODULE plugin)
     if (plugin == nullptr || !AdaUnlockWanted())
         return;
 
+    bool fresh = false;
+
     {
         std::lock_guard<std::mutex> lock(g_pluginMutex);
 
         if (std::find(g_plugins.begin(), g_plugins.end(), plugin) == g_plugins.end())
         {
             g_plugins.push_back(plugin);
-
-            // At load, ahead of any use of the plugin.
-            PatchFlipMetering(plugin);
+            fresh = true;
         }
     }
+
+    // At load, ahead of any use of the plugin.
+    if (fresh)
+        PatchFlipMetering(plugin);
 
     // A no-op until the snippet unlock has landed; TryApply calls it again then.
     PatchPluginCeilings();

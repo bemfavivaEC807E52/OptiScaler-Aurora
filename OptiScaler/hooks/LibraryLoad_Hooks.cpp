@@ -718,6 +718,17 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
     return result;
 }
 
+void LibraryLoadHooks::AfterFreeLibrary(PVOID lpLibrary)
+{
+    if (lpLibrary == nullptr || State::Instance().isShuttingDown)
+        return;
+
+    // The MFG unlock keeps a record per DLSS-G copy it patched. A copy the loader really unmapped (the
+    // driver's DriverStore snippet is loaded for a capability probe and released again) must stop
+    // counting, and a later reload at the same address must be patched afresh.
+    MfgUnlock::OnModuleReleased(static_cast<HMODULE>(lpLibrary));
+}
+
 HMODULE LibraryLoadHooks::LoadNvApi()
 {
     LOG_FUNC();

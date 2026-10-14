@@ -48,7 +48,7 @@ struct Status
     bool ValidateMatched = false;
     unsigned int KernelsRewritten = 0;
     std::string SnippetVersion; // file version of nvngx_dlssg.dll, empty if it could not be read
-    unsigned int CopiesSeen = 0;     // distinct module handles processed
+    unsigned int CopiesSeen = 0;     // distinct copies processed that are still mapped
     unsigned int CopiesComplete = 0; // ...of which fully patched (both gates)
     std::string UnmatchedVersion;    // version of the first copy whose signatures missed, for reports
     bool KernelsMissing = false;     // a copy's gates were known but left shut: no kernel could be retargeted
@@ -79,6 +79,11 @@ bool AnyModuleSeen();
 // prefer the handle form at load sites so a second copy is not missed after the first.
 void TryApply();
 void TryApply(HMODULE module);
+
+// The loader released a module (called after FreeLibrary / LdrUnloadDll returned). A DLSS-G copy that is
+// really unmapped stops counting towards the fail-closed ceiling, and a later reload at the same address
+// is patched afresh.
+void OnModuleReleased(HMODULE module);
 
 // A Streamline DLSS-G plugin (sl.dlss_g) was loaded, from wherever the game or the driver's OTA store
 // put it. Software frame pacing is applied at once if configured; the plugin's own frame-count clamp is

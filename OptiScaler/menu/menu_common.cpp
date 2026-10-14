@@ -3627,10 +3627,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                     {
                         const std::string unmatched =
                             mfg.UnmatchedVersion.empty() ? AuroraUtf8(L"版本未知") : mfg.UnmatchedVersion;
-                        ImGui::TextColored(bad,
-                                           AURORA_CN("已加载 %u 个 nvngx_dlssg 副本，其中 %s "
-                                                     "未能修补；为避免游戏用到未修补的副本，未开放高倍率。"),
-                                           mfg.CopiesSeen, unmatched.c_str());
+                        ImGui::TextColored(
+                            bad,
+                            AURORA_CN("当前加载着 %u 个 nvngx_dlssg 副本，其中 %s 未能修补；"
+                                      "为安全起见不额外提高倍率上限，高倍率能否使用取决于游戏实际用的是哪一份。"),
+                            mfg.CopiesSeen, unmatched.c_str());
                     }
                     else
                         ImGui::TextColored(bad,

@@ -453,5 +453,9 @@ BOOL KernelHooks::hk_K32_FreeLibrary(HMODULE lpLibrary)
             return result.value() == TRUE;
     }
 
-    return o_K32_FreeLibrary(lpLibrary);
+    auto freeResult = o_K32_FreeLibrary(lpLibrary);
+
+    LibraryLoadHooks::AfterFreeLibrary(lpLibrary);
+
+    return freeResult;
 }
