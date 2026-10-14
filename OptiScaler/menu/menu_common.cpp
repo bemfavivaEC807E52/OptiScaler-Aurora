@@ -3605,16 +3605,32 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 {
                     const std::string version = mfg.SnippetVersion.empty() ? AuroraUtf8(L"版本未知") : mfg.SnippetVersion;
 
-                    if (mfg.CopiesComplete > 0)
+                    // What the game is actually offered decides the line. The ceiling opens only when every
+                    // copy seen is fully patched, so one patched copy beside an unknown one (the driver's OTA
+                    // copy, say) still leaves MFG shut, and the overlay has to say so.
+                    if (MfgUnlock::UnlockedMax() > 0)
                     {
-                        // Any fully patched copy means MFG is up; copies with unknown
-                        // signatures (e.g. the driver store) are a log-line matter, not
-                        // something the overlay should cry about.
                         if (mfg.CopiesSeen > 1)
                             ImGui::TextColored(good, AURORA_CN("nvngx_dlssg %s：MFG 已启用（已修补 %u 个副本）。"),
                                                version.c_str(), mfg.CopiesComplete);
                         else
                             ImGui::TextColored(good, AURORA_CN("nvngx_dlssg %s：两个限制点均已修补。"), version.c_str());
+                    }
+                    else if (mfg.KernelsMissing)
+                    {
+                        ImGui::TextColored(bad,
+                                           AURORA_CN("nvngx_dlssg %s：插帧内核未能切换为 Blackwell "
+                                                     "路径；为避免生成帧时间错乱，未开放高倍率。"),
+                                           version.c_str());
+                    }
+                    else if (mfg.CopiesComplete > 0)
+                    {
+                        const std::string unmatched =
+                            mfg.UnmatchedVersion.empty() ? AuroraUtf8(L"版本未知") : mfg.UnmatchedVersion;
+                        ImGui::TextColored(bad,
+                                           AURORA_CN("已加载 %u 个 nvngx_dlssg 副本，其中 %s "
+                                                     "未能修补；为避免游戏用到未修补的副本，未开放高倍率。"),
+                                           mfg.CopiesSeen, unmatched.c_str());
                     }
                     else
                         ImGui::TextColored(bad,
@@ -3624,6 +3640,24 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                     if (mfg.KernelsRewritten > 0)
                         ImGui::TextColored(good, AURORA_CN("%u 个 Kernel Container 已切换为 Blackwell 路径。"), mfg.KernelsRewritten);
+
+                    // The Streamline plugin's own clamp. Empty until a plugin was seen after the snippet
+                    // unlock landed.
+                    const std::string_view ceiling = mfg.PluginCeiling;
+                    if (ceiling == "patched")
+                        ImGui::TextColored(good, AURORA_CN("Streamline 插件倍率上限：已解除。"));
+                    else if (!ceiling.empty())
+                        ImGui::TextColored(bad, AURORA_CN("Streamline 插件倍率上限：未修补（%s）。"),
+                                           ceiling == "ambiguous"      ? AURORA_CN("匹配到多处，已放弃")
+                                           : ceiling == "not writable" ? AURORA_CN("内存不可写")
+                                                                       : AURORA_CN("特征未匹配"));
+
+                    // Software frame pacing ([DLSSG] AdaFlipMeteringPatch). Silent while it is off.
+                    const std::string_view flip = mfg.FlipMetering;
+                    if (flip == "patched")
+                        ImGui::TextColored(good, AURORA_CN("软件帧调度：已开启（修改 %u 处）。"), mfg.FlipSites);
+                    else if (!flip.empty() && flip != "off")
+                        ImGui::TextColored(bad, AURORA_CN("软件帧调度：未开启（%s）。"), mfg.FlipMetering);
                 }
             }
         }
