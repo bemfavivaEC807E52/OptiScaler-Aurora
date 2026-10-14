@@ -1,0 +1,94 @@
+# 极光x 改动记录
+
+极光x 是在 OptiScaler 极光版（Aurora）基础上的个人维护分支，只放移植过来的修复和必要的调整，不加新功能。
+
+## 基本信息
+
+- **仓库和分支：** https://github.com/bemfavivaEC807E52/OptiScaler-Aurora ，分支 `aurora-plus`。
+- **底座：** 极光 https://github.com/abc354402600/OptiScaler-Aurora 的 `aurora` 分支，提交 `bde8bcdc`（2026-10-06）。这是 v1.1.2 发布之后的版本，带两项还没发版的 D3D12 修正。
+- **分支方式：**
+  - `aurora` 分支始终和极光保持一致，用 GitHub 的"同步复刻"更新。
+  - 极光x 的改动只放在 `aurora-plus`。极光每次更新后，在新的 `aurora` 上把这些改动重做一遍，极光已经吸收的就去掉。
+  - 如果极光把这些改动全部吸收了，就直接用极光官方包。
+- **编译：** 本地用 VS 2022 生成工具（v143），或者在 Actions 里手动运行 "Build Aurora (No Signing)"，分支选 `aurora-plus`。
+- **使用路线：** RTX 4090，游戏原生 DLSSG（FG Input 和 FG Output 都是"无"），RTX 40 MFG 解锁覆盖到 4X，再加 DLSS 神经渲染。下面"移植"和"不移植"的判断都以这条路线为准。
+
+## 改动列表
+
+| 极光x 提交 | 改动 | 上游来源 | 移植说明 |
+|---|---|---|---|
+| `5af83221` | 游戏给 Reflex 帧标记传空指针时不再崩溃（官方提到印第安纳琼斯启动时会这样） | 官方 [optiscaler/OptiScaler](https://github.com/optiscaler/OptiScaler) `12b248c2`（2026-10-13） | 有冲突，手动合并。只取空帧检查，放在函数最前面，因为极光的这个函数一开始就会读帧标记。官方那段代码里还带着更早一个提交加的函数指针检查，没有带进来 |
+| `b886d171` | "正在创建 D3D 设备"标记改为每个线程各自一份，避免多线程同时创建设备时标记一直卡住 | 官方 `2d91b8e3`（2026-10-13） | 直接套用。极光识别显卡时也会在别的线程设这个标记，同样适用 |
+| `39de76e8` | 修复跨盘时的路径判断。原来游戏装在非 C 盘时，C 盘的 Streamline 插件会被误认成 OptiScaler 自带的 | 官方 `880402ba`（2026-10-13） | 只取 `Util.cpp` 的修复，菜单标语没有取 |
+| `2d8222b2` | `[NvApi] DisableOTA` 默认改为开启：游戏只用自带的或运行库同步装上的 Streamline 插件，不加载 NVIDIA 自动下载的版本 | 极光x 自己的决定 | 用来规避没有移植的官方 `4abfd7b6`（见下文）。写 `DisableOTA=false` 可以恢复原来的行为 |
+| `d5a8cdcb` | MFG 解锁，三项移植加补强，详见下一节 | Susemi，以及更上游的几个项目，见下一节 | 保留极光原有的"每份副本都修补，有一份没修完就不开放高倍率"，没有采用 Susemi 的"每个进程只修一次" |
+| `5b045d24` | 面板上的 MFG 状态以实际开放的倍率为准，没开放时写明原因；新增插件倍率上限和软件帧调度两行状态 | 极光x 自己的修正 | 原来只要有一份副本修好，面板就显示"已启用"，但实际上可能并没有开放高倍率 |
+
+### `d5a8cdcb`：MFG 解锁
+
+**移植的三项**
+
+1. **识别不同位置的插帧 DLL**（`MfgUnlockProvider.h`）
+   - 加载挂钩改为按路径识别，驱动放在 `models\dlssg\...\<hash>.bin` 的自动下载副本也会被修补。
+   - 不带参数的入口，在按名字找不到时，会有频率限制地扫描已加载的模块。扫描会排除 DLSS 5 超分组件（它导出 DirectSR），避免它被算进"每份副本都要修好"的判断里。
+2. **解除 Streamline 插件自己的倍率上限**（`MfgUnlockPlugin.h`）
+   - 主解锁成功后，把 sl.dlss_g 里 `min(倍率, 缓存值)` 的限制改掉，只改 1 个字节。
+   - 这样 Streamline 先记住了"最多 1 帧"的游戏，也不会再拒绝 3X、4X（错误 38）。
+3. **可选的软件帧调度**（`MfgUnlockFlip.h`）
+   - 新配置项 `[DLSSG] AdaFlipMeteringPatch`，默认关闭。
+   - 只在高倍率下画面卡住时才需要打开。
+
+**来源链**
+- 这三项取自 Susemi：[grim-susemi/OptiScaler-Susemi](https://github.com/grim-susemi/OptiScaler-Susemi)，`dlss-neural-rendering` 分支的 `3def828d`。
+- Susemi 改编自 [KleberMotta/OptiScaler-DLSS5-MFG-RTX40](https://github.com/KleberMotta/OptiScaler-DLSS5-MFG-RTX40) 的 `74c3bac`。
+- 后者又移植自 RenoDX 的 MFG 解锁插件：[ImDreamt/MFGAdaUnlock-RenoDx](https://github.com/ImDreamt/MFGAdaUnlock-RenoDx)，以及 mavismmg 维护的分支。
+- 底层技术最初来自 [dashdogy/RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock)。
+- 这些上游都是 MIT 授权，许可证全文见 `Licenses/MFGUnlock_LICENSE.txt`。
+
+**补强**（参照 Susemi 的做法）
+- 两处倍率限制先定位，确认各自只出现一次，然后才开始修改。认不出来或者匹配到多处的版本一律不动，不会只改了一半。
+- 在 40 系上，如果插帧内核没能换成 Blackwell 版本，就不开放高倍率。否则所有生成帧都会挤在两帧中间，画面一顿一顿的。
+- 替换内核时，先检查每个条目是否在所属容器的范围内，再把整个容器准备好后一次写入。写入中途失败也不会留下一半新、一半旧的状态。
+
+**极光原有的解锁代码出自哪里：** 最早由 [y4my4my4m](https://github.com/y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG) 写成，经 Susemi 传到极光（GPL-3.0）。
+
+## 新增的配置、测试和工具
+
+- **配置：**
+  - 新增 `[DLSSG] AdaFlipMeteringPatch`，默认 false。
+  - `[NvApi] DisableOTA` 的默认值改为 true。
+- **测试：** 来自 Susemi 的 `tests/mfg_provider_smoke.cpp`、`tests/mfg_ceiling_smoke.cpp`、`tests/mfg_flipmeter_smoke.cpp`，已经加入未签名构建流程。`tests/test_october_compatibility.py` 改成了新的 DisableOTA 默认值。
+- **工具：** `tests/mfg_real_module_check.cpp`。它只读地检查真实的 NVIDIA 模块，因为需要 NVIDIA 的文件，所以不放进 CI。
+
+## 验证记录（2026-10-14）
+
+- 本地编译通过。原有的 38 项测试和新加的 3 项测试全部通过。clang-format 对改动行的检查没有问题。
+- 在 RTX 4090 机器上只读检查真实模块：
+  - sl.dlss_g 2.14.0、2.14.1、2.14.16 都找到了唯一的倍率上限位置，软件帧调度的修改方案也一致。
+  - nvngx_dlssg 310.9.1 和 310.9.16 都能正确识别，两处倍率限制各只出现一次。
+  - nvngx_dlss（DirectSR）不会被误认成插帧 DLL。
+- 新旧两种内核替换逻辑在 310.7.129、310.9.0、310.9.1（31 个）、310.9.16（32 个）上选中的容器完全相同。这项补强只在数据异常时改变行为，不影响延迟和帧间隔。
+- 游戏内测试：霍格沃茨之遗（神经渲染加 4X）待测，结果出来后补在这里。
+
+## 评估过但没有移植的
+
+| 项目 | 来源 | 原因 |
+|---|---|---|
+| Preset C（插帧性能模式） | NVIDIA 插帧 310.9.16；RTX40MFG v1.5.0 | 会损失画质，不用 |
+| RTX40MFG v1.5.0 整体 | dashdogy | 代码跟极光不同源，没法合并；其中的 XeSS 多帧生成和 RTX 30 支持对 4090 也没有用 |
+| Streamline 插件多副本挂钩 | 官方 `4abfd7b6` | 改动约 900 行，并且跟极光的 Streamline 代码冲突。用 DisableOTA 默认开启来规避 |
+| 插帧倍率跟随游戏、SL1 的 DLSSG 输出、动态 MFG 时的 Reflex、强制动态 MFG 优先 | 官方 `13db0069`、`b971c82c`、`4bbeefb7`、`ee0dc449` | 只在 FG Input 选 DLSSG、OptiScaler 自己输出 DLSSG 或者开动态 MFG 时起作用，不在这条路线上 |
+| RTX 40 用插帧替换时选不了 2X 以上 | 官方 `5108b6df` | 极光原本就没有这个问题 |
+| FSR 插帧替换、DX11、Linux、Vulkan、XeFG 输入、低延迟新架构、帧率限制器、倍率滑条、菜单改版、重投影 | 官方 | 不在使用路线上，或者依赖官方的新架构 |
+| PTX 帧时间修正（`MfgUnlockPtx.h`） | Susemi | 极光现有的"换用 Blackwell 内核"跑的是 NVIDIA 真正的多帧计算，PTX 方案只是近似 |
+| RTX 20/30 支持（`AmpereMfgLoader`） | Susemi | 4090 用不到 |
+
+## 上游监测
+
+每周一自动检查一次，只在有变化时报告：
+
+- **Susemi：** MFG 解锁的直接上游，同一套代码，改动可以直接移植。
+- **极光：** 底座。如果它吸收了这里的改动，极光x 就删掉自己那份。
+- **RTX40MFG（dashdogy）：** 独立项目，代码不同源。它一加新的 NVIDIA 版本支持，通常说明 NVIDIA 改了东西，所以用作预警和修法参考。注意 `RTX40MFG/RTX40MFG-Unlock` 是名字相近的仓库，不是这个项目。
+
+另外每天检查一次，看有没有比 310.8 更新、而且能在 40 系上用的社区版神经渲染运行库流出。
