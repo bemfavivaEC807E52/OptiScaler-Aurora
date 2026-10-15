@@ -9,12 +9,34 @@
 [![Aurora v1.1.2](https://img.shields.io/badge/Aurora-v1.1.2-7c3aed?style=flat-square)](https://github.com/abc354402600/OptiScaler-Aurora/releases/tag/aurora-v1.1.2)
 ![DLSS 310.9.1](https://img.shields.io/badge/DLSS-310.9.1-76b900?style=flat-square)
 ![Streamline 2.14.1](https://img.shields.io/badge/Streamline-2.14.1-2563eb?style=flat-square)
+[![极光x aurora-plus](https://img.shields.io/badge/%E6%9E%81%E5%85%89x-aurora--plus-0ea5e9?style=flat-square)](docs/AURORA_X.zh-CN.md)
 
 **[下载 v1.1.2](https://github.com/abc354402600/OptiScaler-Aurora/releases/tag/aurora-v1.1.2) · [安装与使用](https://github.com/abc354402600/OptiScaler-Aurora/blob/aurora/docs/GUIDE.zh-CN.md) · [游戏兼容性](https://github.com/abc354402600/OptiScaler-Aurora/blob/aurora/docs/COMPATIBILITY.zh-CN.md) · [更新说明](https://github.com/abc354402600/OptiScaler-Aurora/releases/tag/aurora-v1.1.2)**
 
 </div>
 
 极光版是基于 [OptiScaler](https://github.com/optiscaler/OptiScaler) 及社区分支开发的免费开源项目，提供超分辨率替换、帧生成和画质调节，并针对 RTX 40 多帧生成、DLSS 神经渲染及游戏兼容性做了扩展。它是社区版本，不是 OptiScaler 或 NVIDIA 官方发行版。
+
+## 极光x 更新（`aurora-plus` 分支）
+
+> 极光x 是本复刻自己维护的分支。它以极光 `aurora` 分支的 `bde8bcdc` 为底座，这是 v1.1.2 之后的版本，已经包含下文提到的两项未发版 D3D12 修正。极光x 只移植官方 OptiScaler 和社区分支的修复，不加新功能。运行库（DLSS 310.9.1、Streamline 2.14.1、神经渲染 310.8）和使用方法都跟极光 v1.1.2 相同。目前没有发布安装包，需要自行编译 `aurora-plus` 分支。每项改动的上游来源、移植说明和验证记录见[极光x 改动记录](docs/AURORA_X.zh-CN.md)。
+
+**当前版本 `7bb280dc`（2026-10-14）**，已在霍格沃茨之遗里实测（RTX 4090，神经渲染加 4X）。
+
+| 类别 | 改动 | 来源 |
+|---|---|---|
+| 稳定性 | 游戏给 Reflex 帧标记传空指针时不再崩溃 | 官方 OptiScaler `12b248c2` |
+| 稳定性 | "正在创建 D3D 设备"的标记改为每个线程各自一份，多线程同时创建设备时不再卡住 | 官方 OptiScaler `2d91b8e3` |
+| Streamline | 游戏不在 C 盘时，不再把 C 盘的 Streamline 插件误认成 OptiScaler 自带的 | 官方 OptiScaler `880402ba` |
+| Streamline | `[NvApi] DisableOTA` 默认开启：游戏只用自带的或运行库同步装上的 Streamline 插件，不加载 NVIDIA 自动下载的版本 | 极光x |
+| RTX 40 多帧生成 | 驱动自动下载的 `.bin` 插帧 DLL 和改过名的插帧 DLL 也能识别并修补 | Susemi（源自 KleberMotta 和 RenoDX MFG 解锁插件） |
+| RTX 40 多帧生成 | 解除 Streamline 插件自带的倍率上限，避免 3X、4X 请求被拒 | 同上 |
+| RTX 40 多帧生成 | 新增可选的软件帧调度 `[DLSSG] AdaFlipMeteringPatch`，默认关闭，高倍率下画面卡住时再打开 | 同上 |
+| RTX 40 多帧生成 | 补强：两处倍率限制先定位、确认各只出现一次再修改；插帧内核没替换成功就不开放高倍率；替换内核时先检查边界，再一次写入 | 参照 Susemi |
+| RTX 40 多帧生成 | 已经卸载的插帧 DLL 副本（比如驱动探测用的那份）不再计入判定；同一地址重新加载的副本会重新修补 | 极光x |
+| 游戏内面板 | MFG 状态以实际开放的倍率为准，没开放时写明原因；新增"Streamline 插件倍率上限"和"软件帧调度"两行状态 | 极光x |
+
+这些改动对性能和延迟没有可感知的影响，增加的开销都在微秒以下，详见改动记录。
 
 ## 主要功能
 
