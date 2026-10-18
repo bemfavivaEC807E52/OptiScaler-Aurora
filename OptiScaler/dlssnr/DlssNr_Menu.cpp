@@ -124,6 +124,60 @@ static bool PassOverrideSlider(const char* label, std::optional<float>* own, flo
     return changed;
 }
 
+// The three styles the model is known to take, shared by the global choice and the per-pass one so
+// the two lists cannot drift apart. The names come from community testing, not from NVIDIA.
+constexpr int kStyleCount = 3;
+
+static const char* const* StyleNames()
+{
+    static const std::string names[kStyleCount] = { AuroraUtf8(L"默认（标准）"), AuroraUtf8(L"自然"),
+                                                    AuroraUtf8(L"电影感") };
+    static const char* const items[kStyleCount] = { names[0].c_str(), names[1].c_str(), names[2].c_str() };
+    return items;
+}
+
+// The per-pass style: the same checkbox as the sliders above, enabling a list instead of a slider.
+// The pass already reads its own style (TuningFor); this only gives it a control.
+static bool PassOverrideStyle(std::optional<uint32_t>* own, uint32_t global, int pass)
+{
+    bool changed = false;
+    bool has = own->has_value();
+
+    const std::string useId = std::string("##usestyle") + std::to_string(pass);
+
+    if (ImGui::Checkbox(useId.c_str(), &has))
+    {
+        if (has)
+            *own = std::min(global, (uint32_t) (kStyleCount - 1));
+        else
+            own->reset();
+
+        changed = true;
+    }
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!has);
+
+    int value = (int) std::min(own->value_or(global), (uint32_t) (kStyleCount - 1));
+    const std::string comboId = std::string(AURORA_CN("风格")) + "##" + std::to_string(pass);
+
+    if (ImGui::Combo(comboId.c_str(), &value, StyleNames(), kStyleCount) && has)
+    {
+        *own = (uint32_t) value;
+        changed = true;
+    }
+
+    ImGui::EndDisabled();
+
+    if (!has)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled(AURORA_CN("跟随全局"));
+    }
+
+    return changed;
+}
+
 void RenderMenu(Config* config, float menuResScale)
 {
 
@@ -254,6 +308,19 @@ void RenderMenu(Config* config, float menuResScale)
                 pendingPasses = -1;
             }
 
+            // Placed here, after the edit check, so it sits beside the slider it explains. At the end
+            // of the block it landed beside whatever came last and doubled up with that row's own.
+            HelpMarker(
+                AuroraUtf8(L"控制模型对同一帧连续处理多少遍；每一遍都会接收上一遍的输出。\n\n这是本页开销最大的选项，性"
+                           L"能成本几乎严格线性：5 遍就是每帧运行约 5 "
+                           L"次模型。\n\n它真正独有的作用，是让模型重新判断细节应该出现在哪里、采用什么色相与饱和度；“"
+                           L"细节强度”只能放大第一遍已经生成的细节图，无法重新绘制。\n\n如果只是想让效果更明显，优先尝"
+                           L"试“细节强度”“强度”和提高“模型分辨率”，这些方式通常比直接增加遍数划算。\n\n超过 3 "
+                           L"遍后建议同步提高“高光保护”，否则多遍叠加的亮度比例会被保护阈值截断，额外计算可能被浪费。\n"
+                           L"\n每一遍都有独立模型状态和显存历史，因此提高遍数时会需要数秒逐步构建，显存占用也会增加。\n"
+                           L"\n原生 Vulkan 路径或启用代理路径时，此选项可能不生效。")
+                    .c_str());
+
             if (bool lift = unlocked; ImGui::Checkbox(AURORA_CN("解除遍数限制"), &lift))
             {
                 config->DlssNrUnlockPasses = lift;
@@ -293,7 +360,16 @@ void RenderMenu(Config* config, float menuResScale)
 
             if (liveCount > 1)
             {
-                if (ImGui::TreeNode(AURORA_CN("分遍设置")))
+                const bool perPassOpen = ImGui::TreeNode(AURORA_CN("分遍设置"));
+
+                HelpMarker(
+                    AuroraUtf8(L"这里可以为每一遍模型单独覆盖参数，包括风格。\n\n保持“跟随全局”时，该遍会继承上方全局设"
+                               L"置，因此未单独修改的遍数行为与默认状态完全一致。\n\n多遍处理是串联的：后一遍看到的是前"
+                               L"一遍已经处理过的结果。逐遍适当降低强度，可以让后面的模型更偏向精修，而不是反复放大同一"
+                               L"效果。\n\n风格也可以逐遍不同，例如第 1 遍用“自然”打底，第 2 遍用“电影感”收尾。")
+                        .c_str());
+
+                if (perPassOpen)
                 {
                     auto overrides = DlssNr::ParsePassOverridesForMenu(
                         config->DlssNrPassOverrides.value_or_default());
@@ -321,6 +397,7 @@ void RenderMenu(Config* config, float menuResScale)
                         edited |= PassOverrideSlider(AURORA_CN("皮肤结构"), &own.SkinStructure,
                                                      config->DlssNrSkinStructure.value_or_default(),
                                                      -1.0f, 4.0f, pass);
+                        edited |= PassOverrideStyle(&own.Style, config->DlssNrStyle.value_or_default(), pass);
 
                         ImGui::TreePop();
                     }
@@ -328,13 +405,9 @@ void RenderMenu(Config* config, float menuResScale)
                     if (edited)
                         config->DlssNrPassOverrides = DlssNr::SerializePassOverrides(overrides);
 
-                    HelpMarker(AuroraUtf8(L"这里可以为每一遍模型单独覆盖参数。\n\n保持“跟随全局”时，该遍会继承上方全局设置，因此未单独修改的遍数行为与默认状态完全一致。\n\n多遍处理是串联的：后一遍看到的是前一遍已经处理过的结果。逐遍适当降低强度，可以让后面的模型更偏向精修，而不是反复放大同一效果。").c_str());
-
                     ImGui::TreePop();
                 }
             }
-
-            HelpMarker(AuroraUtf8(L"控制模型对同一帧连续处理多少遍；每一遍都会接收上一遍的输出。\n\n这是本页开销最大的选项，性能成本几乎严格线性：5 遍就是每帧运行约 5 次模型。\n\n它真正独有的作用，是让模型重新判断细节应该出现在哪里、采用什么色相与饱和度；“细节强度”只能放大第一遍已经生成的细节图，无法重新绘制。\n\n如果只是想让效果更明显，优先尝试“细节强度”“强度”和提高“模型分辨率”，这些方式通常比直接增加遍数划算。\n\n超过 3 遍后建议同步提高“高光保护”，否则多遍叠加的亮度比例会被保护阈值截断，额外计算可能被浪费。\n\n每一遍都有独立模型状态和显存历史，因此提高遍数时会需要数秒逐步构建，显存占用也会增加。\n\n原生 Vulkan 路径或启用代理路径时，此选项可能不生效。").c_str());
         }
 
         // Any percentage, rather than a handful of steps somebody chose in advance. The lower bound
@@ -474,16 +547,12 @@ void RenderMenu(Config* config, float menuResScale)
 
         HelpMarker(AuroraUtf8(L"“默认”表示让模型自行选择。\n\n这里的预设编号与 DLSS 超分或光线重建的预设不是同一套含义；相同数字在这里代表的是不同模型设置。").c_str());
 
-        static const std::string nrStyleDefault = AuroraUtf8(L"默认（标准）");
-        static const std::string nrStyleNatural = AuroraUtf8(L"自然");
-        static const std::string nrStyleCinematic = AuroraUtf8(L"电影感");
-        static const char* nrStyleNames[] = { nrStyleDefault.c_str(), nrStyleNatural.c_str(), nrStyleCinematic.c_str() };
         int style = (int) config->DlssNrStyle.value_or_default();
 
-        if (style > 2)
-            style = 2;
+        if (style > kStyleCount - 1)
+            style = kStyleCount - 1;
 
-        if (ImGui::Combo(AURORA_CN("风格"), &style, nrStyleNames, IM_ARRAYSIZE(nrStyleNames)))
+        if (ImGui::Combo(AURORA_CN("风格"), &style, StyleNames(), kStyleCount))
             config->DlssNrStyle = (uint32_t) style;
 
         HelpMarker(AuroraUtf8(L"模型自身提供的处理风格。\n\n默认（标准）：效果最强，会提升局部对比、压深光照，也更容易出现过饱和或明显的风格化；很多“模型改变了游戏原本观感”的现象都来自这一档。\n\n自然：保留同类细节增强，但处理更克制，肤色与整体明暗关系更接近游戏原始渲染。\n\n电影感：减少高光发亮和过度处理，画面更偏电影式质感。\n\n这些参数在模型构建时读取，修改后会触发重新构建。名称来自社区测试，NVIDIA 的二进制中并未提供官方名称。").c_str());
