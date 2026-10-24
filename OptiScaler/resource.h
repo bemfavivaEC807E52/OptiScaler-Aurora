@@ -25,8 +25,8 @@
 #define VER_BUILD_NUMBER 1
 
 // Aurora X release version. Keep this separate from the upstream OptiScaler base version.
-// 1.1.3 is Aurora v1.1.2 (bde8bcdc) plus the Aurora X changes listed in docs/AURORA_X.zh-CN.md.
-#define VER_AURORA_VERSION "1.1.3"
+// 1.1.4 is Aurora v1.1.2 (bde8bcdc) plus the Aurora X changes listed in docs/AURORA_X.zh-CN.md.
+#define VER_AURORA_VERSION "1.1.4"
 
 #define VER_DEV_RELEASE
 // #define VER_PRE_RELEASE
@@ -34,7 +34,7 @@
 // Follows the release suffix in every flavour of VER_PRODUCT_VERSION_STR. Adjacent literals
 // concatenate, so an empty tag reproduces the upstream string byte for byte.
 #ifndef VER_FORK_TAG
-#define VER_FORK_TAG "-aurora-x-v1.1.3"
+#define VER_FORK_TAG "-aurora-x-v1.1.4"
 #endif
 
 #define VER_FILE_VERSION VER_MAJOR_VERSION, VER_MINOR_VERSION, VER_HOTFIX_VERSION, VER_BUILD_NUMBER

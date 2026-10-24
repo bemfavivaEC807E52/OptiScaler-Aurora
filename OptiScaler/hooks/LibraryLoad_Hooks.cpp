@@ -632,7 +632,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for OptiScaler, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == FfxApiProxy::Dx12Module())
@@ -640,7 +639,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for FFX Dx12, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == FfxApiProxy::VkModule())
@@ -648,7 +646,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for FFX Vulkan, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == XeSSProxy::Module())
@@ -656,7 +653,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for XeSS, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == DxgiProxy::Module())
@@ -664,7 +660,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for DXGI, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == D3d12Proxy::Module())
@@ -672,7 +667,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for D3D12, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == Kernel32Proxy::Module())
@@ -680,7 +674,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for Kernel32, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == KernelBaseProxy::Module())
@@ -688,7 +681,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for KernelBase, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == NtdllProxy::Module())
@@ -696,7 +688,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for ntdll, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == vulkanModule)
@@ -704,7 +695,6 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for Vulkan, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
     else if (lpLibrary == d3d11Module)
@@ -712,9 +702,16 @@ std::optional<NTSTATUS> LibraryLoadHooks::FreeLibrary(PVOID lpLibrary)
 #ifdef LOG_LIB_OPERATIONS
         LOG_WARN("Call for D3D11, caller: {}", Util::WhoIsTheCaller(_ReturnAddress()));
 #endif
-        State::Instance().modulesToFree.insert(lpLibrary);
         result = TRUE;
     }
+
+    // FreeLibrary comes from any thread, e.g. GetFileVersionInfo inside parallel FFX context creation
+    if (result.has_value())
+    {
+        std::scoped_lock lock(State::Instance().modulesToFreeMutex);
+        State::Instance().modulesToFree.insert(lpLibrary);
+    }
+
     return result;
 }
 
