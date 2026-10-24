@@ -21,12 +21,13 @@
 
 > 极光x 是本复刻自己维护的分支。它以极光 `aurora` 分支的 `bde8bcdc` 为底座，这是 v1.1.2 之后的版本，已经包含下文提到的两项未发版 D3D12 修正。极光x 主要移植官方 OptiScaler 和社区分支的修复；自己加的功能只限于把极光已有的能力放进面板，并单独标明。运行库（DLSS 310.9.1、Streamline 2.14.1、神经渲染 310.8）和使用方法都跟极光 v1.1.2 相同。目前没有发布安装包，需要自行编译 `aurora-plus` 分支。每项改动的上游来源、移植说明和验证记录见[极光x 改动记录](docs/AURORA_X.zh-CN.md)。
 
-**当前版本：极光X 1.1.3（`1e66579b`，2026-10-18）**，面板标题显示 "OptiScaler Aurora X v1.1.3"。上一版 `7bb280dc` 已在霍格沃茨之遗里实测（RTX 4090，神经渲染加 4X）。
+**当前版本：极光X 1.1.4（`bf319f4d`，2026-10-24）**，面板标题显示 "OptiScaler Aurora X v1.1.4"。上一版 `7bb280dc` 已在霍格沃茨之遗里实测（RTX 4090，神经渲染加 4X）。
 
 | 类别 | 改动 | 来源 |
 |---|---|---|
 | 稳定性 | 游戏给 Reflex 帧标记传空指针时不再崩溃 | 官方 OptiScaler `12b248c2` |
 | 稳定性 | "正在创建 D3D 设备"的标记改为每个线程各自一份，多线程同时创建设备时不再卡住 | 官方 OptiScaler `2d91b8e3` |
+| 稳定性（1.1.4） | 多个线程同时调用 FreeLibrary 时，"拦下不卸载的模块"列表加锁写入，不再可能被写坏 | 官方 OptiScaler `83e18f1a`（只取 FreeLibrary 部分） |
 | Streamline | 游戏不在 C 盘时，不再把 C 盘的 Streamline 插件误认成 OptiScaler 自带的 | 官方 OptiScaler `880402ba` |
 | Streamline | `[NvApi] DisableOTA` 默认开启：游戏只用自带的或运行库同步装上的 Streamline 插件，不加载 NVIDIA 自动下载的版本 | 极光x |
 | RTX 40 多帧生成 | 驱动自动下载的 `.bin` 插帧 DLL 和改过名的插帧 DLL 也能识别并修补 | Susemi（源自 KleberMotta 和 RenoDX MFG 解锁插件） |
