@@ -76,6 +76,10 @@
 - **配置：**
   - 新增 `[DLSSG] AdaFlipMeteringPatch`，默认 false。
   - `[NvApi] DisableOTA` 的默认值改为 true。
+  - 自带的 `OptiScaler.ini` 模板里，`[DlssNr]` 的默认值改成在霍格沃茨之遗（RTX 4090）里调好的那组（2026-10-26）：
+    - 神经渲染默认开启，2 遍，模型分辨率 67%，色彩强度 0.5，高光保护 1.5，模型预设 2（新模型，需要 310.9.16 运行库），风格"自然"。
+    - 分遍设置：第 1 遍强度 1.0、局部结构 1.0、局部色调 1.0、皮肤 0.6，风格"自然"；第 2 遍强度 0.8、局部结构 1.0、局部色调 0.4、皮肤 0.3，风格"电影感"。
+    - 只改了模板，代码里的默认值没动，所以已经装好的游戏不受影响，只有新安装的游戏会用这组值。白点来源这类按游戏标定的曝光设置保持 auto。
 - **测试：** 来自 Susemi 的 `tests/mfg_provider_smoke.cpp`、`tests/mfg_ceiling_smoke.cpp`、`tests/mfg_flipmeter_smoke.cpp`，已经加入未签名构建流程。`tests/test_october_compatibility.py` 改成了新的 DisableOTA 默认值。
 - **工具：** `tests/mfg_real_module_check.cpp`。它只读地检查真实的 NVIDIA 模块，因为需要 NVIDIA 的文件，所以不放进 CI。
 
