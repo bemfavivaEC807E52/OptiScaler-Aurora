@@ -69,14 +69,15 @@ class NtdllHooks
             if (skip.empty() || LibraryLoadHooks::EndsWithInsensitive(name, std::wstring_view(skip)) ||
                 LibraryLoadHooks::EndsWithInsensitive(name, std::wstring(skip + L".dll")))
             {
-                LOG_TRACE("Skip checks for: {}", wstring_to_string(name.data()));
+                LOG_TRACE("Skip checks for: {}", wstring_to_string(std::wstring(name)));
                 return o_LdrLoadDll(PathToFile, Flags, ModuleFileName, ModuleHandle);
             }
         }
 
         // if (originalModule != Util::GetCallerModule(_ReturnAddress()))
         {
-            auto moduleHandle = LibraryLoadHooks::LoadLibraryCheckW(name.data(), name.data());
+            const std::wstring nameStr(name);
+            auto moduleHandle = LibraryLoadHooks::LoadLibraryCheckW(nameStr, nameStr.c_str());
 
             // skip loading of dll
             if (moduleHandle == (HMODULE) 1337)
@@ -86,7 +87,7 @@ class NtdllHooks
 
             if (moduleHandle != nullptr)
             {
-                LOG_TRACE("{}, caller: {}", wstring_to_string(name.data()), Util::WhoIsTheCaller(_ReturnAddress()));
+                LOG_TRACE("{}, caller: {}", wstring_to_string(nameStr), Util::WhoIsTheCaller(_ReturnAddress()));
                 *ModuleHandle = (HANDLE) moduleHandle;
                 return (NTSTATUS) 0x00000000L;
             }
@@ -129,7 +130,7 @@ class NtdllHooks
             if (skip.empty() || LibraryLoadHooks::EndsWithInsensitive(name, std::wstring_view(skip)) ||
                 LibraryLoadHooks::EndsWithInsensitive(name, std::wstring(skip + L".dll")))
             {
-                LOG_TRACE("Skip checks for: {}", wstring_to_string(name.data()));
+                LOG_TRACE("Skip checks for: {}", wstring_to_string(std::wstring(name)));
                 return o_NtLoadDll(PathToFile, Flags, ModuleFileName, ModuleHandle);
             }
         }
@@ -137,7 +138,9 @@ class NtdllHooks
         // Do not interfere with original modules calls
         if (originalModule != Util::GetCallerModule(_ReturnAddress()))
         {
-            auto moduleHandle = LibraryLoadHooks::LoadLibraryCheckW(name.data(), path.data());
+            const std::wstring nameStr(name);
+            const std::wstring pathStr(path);
+            auto moduleHandle = LibraryLoadHooks::LoadLibraryCheckW(nameStr, pathStr.c_str());
 
             // skip loading of dll
             if (moduleHandle == (HMODULE) 1337)
@@ -147,7 +150,7 @@ class NtdllHooks
 
             if (moduleHandle != nullptr)
             {
-                LOG_TRACE("{}, caller: {}", wstring_to_string(name.data()), Util::WhoIsTheCaller(_ReturnAddress()));
+                LOG_TRACE("{}, caller: {}", wstring_to_string(nameStr), Util::WhoIsTheCaller(_ReturnAddress()));
                 *ModuleHandle = (HANDLE) moduleHandle;
                 return (NTSTATUS) 0x00000000L;
             }

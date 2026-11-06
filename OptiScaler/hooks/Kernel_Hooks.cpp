@@ -52,6 +52,13 @@ static inline bool IsInsideWindowsDirectory(const std::string& path)
     return false;
 }
 
+// GetFileVersionInfo and friends only read the file, there is nothing to hook or patch
+static inline bool IsDataFileLoad(DWORD dwFlags)
+{
+    return (dwFlags &
+            (LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)) != 0;
+}
+
 static inline HMODULE CheckLoad(const std::wstring& name)
 {
     do
@@ -380,6 +387,9 @@ HMODULE KernelHooks::hk_K32_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, 
     if (lpLibFileName == nullptr)
         return NULL;
 
+    if (IsDataFileLoad(dwFlags))
+        return o_K32_LoadLibraryExW(lpLibFileName, hFile, dwFlags);
+
     std::wstring name(lpLibFileName);
 
 #ifdef _DEBUG
@@ -399,6 +409,9 @@ HMODULE KernelHooks::hk_K32_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, D
 {
     if (lpLibFileName == nullptr)
         return NULL;
+
+    if (IsDataFileLoad(dwFlags))
+        return o_K32_LoadLibraryExA(lpLibFileName, hFile, dwFlags);
 
     std::string nameA(lpLibFileName);
     std::wstring name = string_to_wstring(nameA);
@@ -420,6 +433,9 @@ HMODULE KernelHooks::hk_KB_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, D
 {
     if (lpLibFileName == nullptr)
         return NULL;
+
+    if (IsDataFileLoad(dwFlags))
+        return o_KB_LoadLibraryExW(lpLibFileName, hFile, dwFlags);
 
     std::wstring name(lpLibFileName);
 
